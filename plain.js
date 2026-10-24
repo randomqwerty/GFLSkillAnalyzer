@@ -79,7 +79,7 @@ function phrase(f, A) {
       const rep = f.every ? ` every ${secs(f.every)}${f.life ? ` for ${secs(f.life)}` : ''}` : '';
       return `${x} to ${side === 'self' ? 'the user' : side}${f.area ? ` ${f.area}` : ''}${rep}${f.ignoresArmor ? ' (ignores armor)' : ''}`;
     }
-    case 'knockback': return `${num(v)}% chance per hit to knock back`;
+    case 'knockback': return `${num(v)}% chance per hit to knock the target back${f.knockLen ? ` ${num(f.knockLen)}${f.knockDx > 0 ? ' (toward the enemy side)' : f.knockDx < 0 ? ' (toward the Griffin side)' : ''}` : ''}`;
     case 'surecrit': return `guaranteed crits for ${side}${dur}`;
     case 'hpshield': return `a ${v === undefined ? '' : num(v) + '-point '}shield for ${side}${dur}`;
     case 'dmgtaken': return v === undefined ? `changes damage taken by ${side}${dur}` : `${side} take ${v >= 0 ? '+' : '−'}${num(Math.abs(v))}% damage${dur}`;
@@ -97,6 +97,7 @@ function phrase(f, A) {
     case 'charges': return f.text.split(' for ')[0];
     case 'extra': return `${f.text.split(' for ')[0]} for ${side}${dur}`;
     case 'summon': return f.text.replace(/ \(summon \d+\)$/, '');
+    case 'move': return f.text;
     default: return '';
   }
 }

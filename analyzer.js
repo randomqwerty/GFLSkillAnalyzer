@@ -18,6 +18,8 @@ export const STC_TABLES = [
   'battle_watch', 'battle_watch_trigger', 'summoner', 'battle_skill_type_config', 'equip', 'equip_group',
   'enemy_character_type', 'enemy_illustration', 'enemy_illustration_skill', 'enemy_standard_attribute', 'sangvis', 'sangvis_resolution',
 ];
+// catchdata tables are wrapped as { table_name: [rows] } and hold every value as a string.
+export const CATCH_TABLES = ['battle_movement_info'];
 export const TEXT_TABLES = ['battle_skill_config', 'gun', 'mission', 'equip', 'equip_group', 'enemy_character_type', 'enemy_illustration_skill', 'sangvis'];
 
 /** Unit kinds the analyzer covers: T-Dolls (gun), enemies (enemy_character_type) and Coalition units (sangvis). */
@@ -38,13 +40,18 @@ export async function loadData(base = DEFAULT_BASE, { fetchJson, onProgress, glo
   const jobs = [
     ...STC_TABLES.map((t) => ['stc', t, `${base}/stc/${t}.json`]),
     ...TEXT_TABLES.map((t) => ['text', t, `${base}/text/table/${t}.json`]),
+    ...CATCH_TABLES.map((t) => ['catch', t, `${base}/catchdata/${t}.json`]),
   ];
   let done = 0;
-  const out = { stc: {}, text: {} };
+  const out = { stc: {}, text: {}, catch: {} };
   await Promise.all(jobs.map(async ([kind, name, url]) => {
     out[kind][name] = await fetchJson(url);
     onProgress?.(++done, jobs.length, name);
   }));
+  for (const [name, v] of Object.entries(out.catch)) {
+    const rows = Array.isArray(v) ? v : v?.[name] ?? [];
+    out.stc[name] = rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, x]) => [k, /^-?\d+(\.\d+)?$/.test(String(x)) ? Number(x) : x])));
+  }
   return new GameData(out.stc, out.text, glossary);
 }
 
@@ -101,7 +108,7 @@ export class GameData {
   unitRow(kind, id) { return this.t[UNIT_TABLE[kind]]?.get(Number(id)) ?? null; }
   /** Display name of a unit of any kind. */
   unitName(kind, r) {
-    // The row's name key holds the name; enemy_character_type-1NNNNNNN holds its trait tags ("Melee, Armor").
+    // The row's name key (…-2NNNNNNN) is the name used in most screens; …-1NNNNNNN (the character field) is a fallback.
     if (kind === 'enemy') return this.text(r.name) || this.text(`enemy_character_type-1${String(r.id).padStart(7, '0')}`) || r.code || `#${r.id}`;
     // The EN text table still has Japanese Coalition names; en_name is the English one.
     if (kind === 'sangvis') { const t = this.text(r.name); return (/[A-Za-z]/.test(t) ? t : r.en_name) || t || r.code || `#${r.id}`; }
@@ -481,8 +488,17 @@ class Analysis {
     else if (g.skill2) this.addNote({ sev: 'info', cat: 'other', text: `Skill 2 (${g.skill2}) is a map skill (skill2_type ${g.skill2_type}), not a battle skill, so it is not analysed here.` });
     push('skill3', 'Skill 3', g.skill3, L.skill3, "Uses the unit's Skill 3 level (max 5).", true);
     push('skill_advance', 'Advance skill', g.skill_advance, L.advance, 'Uses the advance skill level (max 5).', true);
-    for (const id of ids(g.skill_resolution).map(Number)) {
-      if (id !== g.skill1) push('skill_resolution', 'Skill 1 after resolution', id, L.skill1, 'Replaces Skill 1 once the unit reaches the resolution step that upgrades it (sangvis_resolution.skill1); uses the Skill 1 level.', true);
+    // Resolution levels replace skills from that level on (sangvis_resolution.skill1-3 / skill_advance, 0 = unchanged);
+    // sangvis.skill_resolution itself is not read by the client.
+    const slot = { skill1: ['Skill 1', L.skill1], skill2: ['Skill 2', L.skill2], skill3: ['Skill 3', L.skill3], skill_advance: ['Advance skill', L.advance] };
+    const seenRes = new Set();
+    for (const r of [...(d.t.sangvis_resolution?.values() ?? [])].filter((x) => x.group_id === g.resolution).sort((a, b) => a.lv - b.lv)) {
+      for (const [f, [name, lv]] of Object.entries(slot)) {
+        const id = Number(r[f]);
+        if (!id || id === Number(g[f]) || seenRes.has(id)) continue;
+        seenRes.add(id);
+        push(`resolution_${f}`, `${name} from resolution ${r.lv}`, id, lv, `Replaces ${name} from resolution level ${r.lv} on (sangvis_resolution ${r.id}); uses the ${name} level.`, true);
+      }
     }
     for (const id of ids(g.passive_skill2).map(Number)) push('passive_skill', 'Passive', id, 1, 'Passive skills always run at level 1 [Gun.InitSkills].');
     for (const id of ids(g.dynamic_passive_skill).map(Number)) {
@@ -1194,10 +1210,12 @@ class Analysis {
     sm.forEach((s, i) => { if (Number(s)) out.push(`${Number(sd[i]) ? `At ${sec(Number(sd[i]))}: ` : ''}${this.summonNode(Number(s), ctx, depth)}`); });
     const ts = list(a.stop_time_speed);
     if (ts.length) out.push(`Slows everything else to ${esc(ts.join('/'))}% speed for ${esc(list(a.stop_time_duration).map((x) => sec(Number(x))).join('/'))} (time stop).`);
-    if (ids(a.move_order).length) {
-      out.push(`Moves a unit (movement ${esc(a.move_order)}; the movement table is not part of GFLData, so distance and direction are not shown).`);
-      this.fact(ctx, 'move', undefined, '', `moves a unit (action ${a.id}, movement ${esc(a.move_order)})`);
-    }
+    const mv = list(a.move_order); const mvd = list(a.move_delay);
+    mv.forEach((m, i) => {
+      if (!Number(m)) return;
+      const d = Number(mvd[i] ?? 0);
+      out.push(`${d ? `At ${sec(d)}: ` : ''}${this.moveText(Number(m), ctx)}`);
+    });
     if (visual && !out.length) out.push(`<span class="dim">Only visual effects (${visual}).</span>`);
     return out;
   }
@@ -1337,6 +1355,51 @@ class Analysis {
     return `<details class="field" data-spec="${esc(JSON.stringify(spec))}" data-side="${casterSide}"><summary>Show on the battlefield${what ? ` <span class="dim">(in the sample layout it ${what})</span>` : ''}</summary>${svg}<p class="legend">Enemy-map coordinates; the Griffin formation is on the left. Dashed squares are formation slots, numbered like a numpad (1–3 bottom row, 3/6/9 front column); dots are dummy links, red = reached. Circles show the radius and, dashed, the radius + 0.4 that a link has to be within. Green dashed lines are GFLMaps' range lines: where an enemy of range 2 or 3 reaches the front column.</p></details>`;
   }
 
+  /**
+   * A movement (catchdata battle_movement_info) in words [CSkillInstance._HandleMovementtEvent / _UpdateMovement].
+   * The unit using the skill moves: for knock-backs that is the knocked unit, which is made to use the skill.
+   */
+  moveText(id, ctx) {
+    const m = this.d.t.battle_movement_info?.get(id);
+    if (!m) return this.note('bug', `Movement ${id} is missing from catchdata battle_movement_info, so nothing moves.`);
+    // offset: ';' list of choices, one picked at random; each "a,b[,c]" is read as left-right a and up-down b
+    // (a third number is ignored), and is not mirrored for enemies [CSkillActions._LoadEvents].
+    const offs = list(m.offset, ';').map((o) => list(o).map(Number)).filter((p) => p.length >= 2).map(([x, z]) => [x || 0, z || 0]);
+    const offTxt = (o) => [o[0] ? `${num(Math.abs(o[0]))} ${o[0] > 0 ? 'toward the enemy side' : 'toward the Griffin side'}` : '', o[1] ? `${num(Math.abs(o[1]))} ${o[1] > 0 ? 'up' : 'down'} the map` : ''].filter(Boolean).join(' and ');
+    const shift = offs.length > 1 ? ` shifted by one of ${offs.length} offsets picked at random (${offs.map((o) => offTxt(o) || 'none').join('; ')})` : offs.length && offTxt(offs[0]) ? ` shifted ${offTxt(offs[0])}` : '';
+    const dest = {
+      0: null, 1: `its own position${shift}`, 2: `its first target${shift}`, 6: `its first target${shift}`,
+      3: `the Griffin team origin${shift}`, 5: `the Griffin team origin${shift}`, 4: `the map's origin${shift}`, 7: 'its own position (no offset)',
+    }[m.target];
+    const who = m.is_character === 1 ? 'The unit (all its dummy links)' : 'The dummy link using the skill';
+    const time = m.duration > 1 ? ` over ${sec(m.duration)}` : ' at once';
+    let text;
+    const selfStep = m.target === 1 && offs.length === 1 && offTxt(offs[0]);
+    const stepLen = selfStep ? (m.distance > 0 ? Math.min(m.distance, Math.hypot(...offs[0])) : Math.hypot(...offs[0])) : 0;
+    if (dest === null) text = `${who} stays where it is${time}`;
+    else if (selfStep) text = `${who} moves ${num(stepLen)} ${offs[0][1] ? `(${offTxt(offs[0])}${m.distance > 0 ? `, at most ${num(m.distance)}` : ''})` : offs[0][0] > 0 ? 'toward the enemy side' : 'toward the Griffin side'}${time}`;
+    else if (dest === undefined) text = `${who} moves (movement ${id}, target type ${m.target})${time}`;
+    else if (m.distance > 0) text = `${who} moves ${num(m.distance)} toward ${dest} (no further than that point)${time}`;
+    else text = `${who} moves to ${dest}${time}`;
+    if (m.cd > 1) text += `; no other movement of that unit can start for ${sec(m.cd)}`;
+    if (this._inKnock) { this._knockMove = { len: stepLen, dx: selfStep ? offs[0][0] : 0, id }; return `${text} (movement ${id}).`; }
+    const dx = m.target === 1 && offs.length === 1 ? offs[0][0] : 0;
+    const dist = m.target === 1 && offs.length === 1 ? (m.distance > 0 ? Math.min(m.distance, Math.hypot(...offs[0])) : Math.hypot(...offs[0])) : undefined;
+    this.fact(ctx, 'move', dist, 'self', m.target === 1 ? `moves ${dist !== undefined ? num(dist) + ' ' : ''}${dx > 0 ? 'toward the enemy side' : dx < 0 ? 'toward the Griffin side' : 'sideways'}` : m.target === 2 || m.target === 6 ? 'dashes to its target' : `moves (movement ${id})`);
+    return `${text} (movement ${id}).`;
+  }
+
+  /** Length and left-right direction of the first self-relative movement in a skill's action, or null. */
+  knockMoveOf(group) {
+    const a = this.d.t.battle_action_config.get(this.d.skillRow(group, 1)?.action_id);
+    for (const id of ids(a?.move_order).map(Number)) {
+      const m = this.d.t.battle_movement_info?.get(id);
+      const o = list(m?.offset, ';').map((x) => list(x).map(Number)).filter((p) => p.length >= 2);
+      if (m?.target === 1 && o.length === 1) { const len = Math.hypot(o[0][0] || 0, o[0][1] || 0); return { len: m.distance > 0 ? Math.min(m.distance, len) : len, dx: o[0][0] || 0, id }; }
+    }
+    return null;
+  }
+
   /** Geometry quirks the game applies silently. */
   creationQuirks(c, aff, p1, p2, ctx) {
     if (!this.creationHasEffect(c) || aff === 'target') return;
@@ -1386,8 +1449,14 @@ class Analysis {
     if (h.target_skill && Number(h.beat_back_percent)) {
       const ts = this.d.skillRow(Number(h.target_skill), 1);
       const isKnock = /击退/.test(ts ? this.d.text(ts.name) : '') || !!this.d.t.battle_action_config.get(ts?.action_id)?.move_order;
-      this.fact(ctx, isKnock ? 'knockback' : 'forcedskill', Number(h.beat_back_percent), ctx.hitSide ?? 'enemy', `${esc(h.beat_back_percent)}% chance per hit to ${isKnock ? 'knock the target back' : `make the target use skill ${h.target_skill}`} (hit ${id})`, { hurt: id });
-      sub.push(`<li>${esc(h.beat_back_percent)}% chance the target is made to use ${this.childSkill(Number(h.target_skill), '', depth, false, true)}</li>`);
+      // The target uses the skill, so any movement in it moves the target.
+      this._inKnock = true; this._knockMove = null;
+      let child;
+      try { child = this.childSkill(Number(h.target_skill), '', depth, false, true); } finally { this._inKnock = false; }
+      const km = this._knockMove ?? this.knockMoveOf(Number(h.target_skill));
+      const how = km?.len ? ` ${num(km.len)} ${km.dx > 0 ? 'toward the enemy side' : km.dx < 0 ? 'toward the Griffin side' : ''}`.trimEnd() : '';
+      this.fact(ctx, isKnock ? 'knockback' : 'forcedskill', Number(h.beat_back_percent), ctx.hitSide ?? 'enemy', `${esc(h.beat_back_percent)}% chance per hit to ${isKnock ? `knock the target back${how}` : `make the target use skill ${h.target_skill}`} (hit ${id})`, { hurt: id }, { knockLen: km?.len, knockDx: km?.dx });
+      sub.push(`<li>${esc(h.beat_back_percent)}% chance the target is made to use ${child}</li>`);
     }
     // A damage formula that only depends on stack counts is recorded with its highest value and its range.
     const rg = r.formula !== undefined ? this.formulaRange(r.formula, ctx) : null;
