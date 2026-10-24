@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GFL Skill Analyzer</title>
+<meta name="description" content="How every Girls' Frontline T-Doll, enemy and Coalition unit skill really works, read from the game's battle tables.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232f6fb0'/%3E%3Cpath d='M9 22l5-12h4l5 12h-3.5l-1-2.6h-5l-1 2.6z M15.4 16.6h3.2L17 12.3z' fill='white'/%3E%3C/svg%3E">
+<style id="page-css"></style>
+<style>
+.app{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
+.side{border-right:1px solid var(--line);padding:14px 14px 20px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--card)}
+.side h1{font-size:1.15rem;margin:0 0 2px}
+.side .sub{color:var(--dim);font-size:.85rem;margin:0 0 12px}
+.side label{display:block;font-size:.8rem;color:var(--dim);margin:10px 0 3px;text-transform:uppercase;letter-spacing:.04em}
+.side input[type=search],.side select,.side input[type=text]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:14px;padding:2px 10px;font-size:.85rem;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.levels{display:grid;grid-template-columns:auto 1fr 2ch;gap:4px 8px;align-items:center;font-size:.9rem}
+.levels input{width:100%}
+[hidden]{display:none!important}
+#unitChips{margin-bottom:10px}
+.list{margin-top:10px;border-top:1px solid var(--line)}
+.list button{display:flex;width:100%;gap:8px;align-items:baseline;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 4px;color:var(--fg);font:inherit;cursor:pointer}
+.list button:hover,.list button[aria-current=true]{background:var(--quote)}
+.list .id{color:var(--dim);font-size:.8rem;min-width:4.5ch}
+.list .ty{margin-left:auto;color:var(--dim);font-size:.8rem}
+.list .nb{color:var(--bug);font-size:.75rem}
+.status{font-size:.85rem;color:var(--dim);margin-top:8px;min-height:1.3em}
+.status.err{color:var(--bug)}
+.main{min-width:0}
+.welcome{max-width:760px;margin:40px auto;padding:0 16px}
+.welcome h2{font-size:1.3rem}
+.welcome li{margin:.3em 0}
+details.adv summary{cursor:pointer;color:var(--dim);font-size:.85rem;margin-top:12px}
+.btnrow{display:flex;gap:6px;margin-top:8px}
+.btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px;padding:5px 10px;font:inherit;font-size:.85rem;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.topbar{display:none}
+.flash{outline:2px solid var(--accent);outline-offset:2px;transition:outline-color .3s}
+@media (max-width:820px){
+  .app{grid-template-columns:1fr}
+  .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .side.collapsed .collapsible{display:none}
+  .topbar{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  .deskonly{display:none}
+  .list{max-height:45vh;overflow:auto}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side">
+    <div class="topbar"><h1>GFL Skill Analyzer</h1><button class="btn" id="toggleSide" aria-expanded="true">Hide list</button></div>
+    <div class="collapsible">
+      <h1 class="deskonly">GFL Skill Analyzer</h1>
+      <p class="sub">How each unit's skills really work, read from the game's battle tables.</p>
+      <div class="chips" id="unitChips" role="group" aria-label="Units"></div>
+      <div class="btnrow" style="margin-bottom:6px"><button class="btn" id="scanBtn" title="Run every check on every unit of this kind and list the findings">Bug scan</button></div>
+      <label for="q" id="qlabel">Find a doll</label>
+      <input type="search" id="q" placeholder="Name or number" autocomplete="off">
+      <div class="gun-only"><label>Type</label>
+      <div class="chips" id="typeChips"></div>
+      <label>Kind</label>
+      <div class="chips" id="kindChips"></div></div>
+      <div class="not-enemy"><label>Skill levels</label>
+      <div class="levels">
+        <span>Skill 1</span><input type="range" id="s1" min="1" max="10" value="10"><output id="s1v">10</output>
+        <span>Skill 2</span><input type="range" id="s2" min="1" max="10" value="10"><output id="s2v">10</output>
+        <span class="sangvis-only">Skill 3</span><input class="sangvis-only" type="range" id="s3" min="1" max="5" value="5"><output class="sangvis-only" id="s3v">5</output>
+        <span class="sangvis-only">Advance</span><input class="sangvis-only" type="range" id="sa" min="1" max="5" value="5"><output class="sangvis-only" id="sav">5</output>
+      </div></div>
+      <details class="adv">
+        <summary>Data source</summary>
+        <label for="region">Server</label>
+        <select id="region"><option value="en">EN</option><option value="ch">CN</option><option value="tw">TW</option><option value="kr">KR</option><option value="jp">JP</option></select>
+        <label for="repo">GitHub repository</label>
+        <input type="text" id="repo" value="randomqwerty/GFLData" spellcheck="false">
+        <div class="btnrow"><button class="btn" id="reload">Reload data</button></div>
+      </details>
+      <div class="status" id="status" role="status">Loading…</div>
+      <div class="list" id="list"></div>
+    </div>
+  </aside>
+  <main class="main" id="main">
+    <div class="welcome">
+      <h2>Pick a unit</h2>
+      <p>This page loads the game's battle tables from the <a href="https://github.com/randomqwerty/GFLData">GFLData</a> repository and explains each skill of a T-Doll, an enemy or a Coalition unit from the data itself: what triggers it, whom it targets, what every buff, hit and area does, and the quirks the in-game text leaves out.</p>
+      <ul>
+        <li><b>Percentage buffs multiply.</b> Two +20% buffs give ×1.44, not +40%. Tile bonuses add up with each other first, then multiply with skill buffs.</li>
+        <li><b>Hidden skills</b> (marked “Hidden skill”) are part of the doll's kit but not shown in game; many skills only work through them.</li>
+        <li><b>Markers</b> are buffs with no effect of their own; kits use them as switches and counters.</li>
+        <li>Flags: <span class="flag flag-bug">Likely bug</span> data that cannot work as written or contradicts the skill's own text, <span class="flag flag-warn">Check</span> something that looks unintended, <span class="flag flag-info">Note</span> a rule worth knowing.</li>
+        <li><b>Hidden effects</b> lists what a kit does that none of its texts states, such as knock-back chances or buffs from hidden skills.</li>
+        <li><b>Show on the battlefield</b> draws where an area effect lands and which dummy links it reaches; you can move the user and the target.</li>
+        <li><b>Bug scan</b> runs every check on every doll, enemy or Coalition unit: inconsistent skill levels, descriptions that disagree with the data, buffs with wrong values or stacking, conditions that can never (or always) hold, markers bosses cannot receive, skill-order races, broken formulas and missing records.</li>
+      </ul>
+      <p class="dim">The first visit downloads about 75 MB of tables; later visits use the browser cache until the repository changes.</p>
+    </div>
+  </main>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
