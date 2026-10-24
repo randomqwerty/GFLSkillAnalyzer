@@ -2,6 +2,8 @@
 
 A static web page that explains how the skills of any Girls' Frontline T-Doll, enemy (`enemy_character_type`) or Coalition unit (`sangvis`) work, read straight from the game's battle tables. It loads the tables from the [GFLData](https://github.com/randomqwerty/GFLData) repository, so new units appear as soon as that repository is updated.
 
+Created with Claude using various other references (e.g., existing code from GFLDecompress and GFLMaps, a battlefield model spreadsheet, decompiled game code from Ghidra, and other datamining notes).
+
 ## Files
 
 | File | What it is |
@@ -15,23 +17,6 @@ A static web page that explains how the skills of any Girls' Frontline T-Doll, e
 | `render.js` | Turns an analysis into HTML; its `PAGE_CSS` holds the shared styles |
 | `glossary-en.json` | English labels for the developers' Chinese buff and skill names |
 | `build-report.mjs` | Runs every check on every unit and writes the findings as one Markdown file (Node 18+) |
-
-## Hosting on GitHub Pages
-
-1. Copy these files into a repository, either at the root or in a `docs/` folder.
-2. In the repository settings, open **Pages** and choose **Deploy from a branch**. Pick that branch and folder.
-3. Open `https://<user>.github.io/<repo>/`. Any unit can be linked directly: `#id=<doll id>`, `#enemy=<id>` or `#sangvis=<id>`. Optional parameters:
-   - `&s1=` and `&s2=` set the skill levels, and `&s3=` and `&sa=` the Coalition Skill 3 and advance skill levels;
-   - `&region=` sets the server (`en`, `ch`, `tw`, `kr`, `jp`);
-   - `&repo=` sets a different data repository.
-
-The page asks GitHub for the latest GFLData commit. It then downloads the tables (about 75 MB) from that exact commit and keeps them in the browser cache. A new upstream commit is picked up on the next visit, and **Reload data** clears the cache.
-
-The page has to be served over http(s). Opening `index.html` as a local file blocks the module scripts. To try it locally:
-
-```bash
-python -m http.server 8765 --directory tools/skill-analyzer
-```
 
 ## Finding bugs
 
